@@ -1,45 +1,69 @@
 #include "MyBot.h"
+#include <cstdio>
 #include <dpp/dpp.h>
+#include <iomanip>
+#include <sstream>
 
-/* Be sure to place your token in the line below.
- * Follow steps here to get a token:
- * https://dpp.dev/creating-a-bot-application.html
- * When you invite the bot, be sure to invite it with the 
- * scopes 'bot' and 'applications.commands', e.g.
- * https://discord.com/oauth2/authorize?client_id=940762342495518720&scope=bot+applications.commands&permissions=139586816064
- */
-const std::string    BOT_TOKEN    = "add your token here";
+int main() {
+    /* Example to record a user in a VC
+    *
+    * Recording is output as './me.pcm' and you can play it via the soundboard example
+    * or use ffmpeg 'ffplay -f s16le -ar 48000 -ac 2 -i ./me.pcm'
+    */
 
-int main()
-{
-	/* Create bot cluster */
-	dpp::cluster bot(BOT_TOKEN);
+    /* Replace with the user's id you wish to record */
+    dpp::snowflake user_id = 1190197595453272104;
 
-	/* Output simple log messages to stdout */
-	bot.on_log(dpp::utility::cout_logger());
+    /* Setup the bot */
+    dpp::cluster bot("MTE5MDE5NzU5NTQ1MzI3MjEwNA.GfmuIJ.PYG-8ZfB21WTXKfEdCXwfsgXOVzftvhFcK61jg");
 
-	/* Register slash command here in on_ready */
-	bot.on_ready([&bot](const dpp::ready_t& event) {
-		/* Wrap command registration in run_once to make sure it doesnt run on every full reconnection */
-		if (dpp::run_once<struct register_bot_commands>()) {
-			std::vector<dpp::slashcommand> commands {
-				{ "ping", "Ping pong!", bot.me.id }
-			};
+    FILE* fd;
+    fopen_s(&fd, "./me.pcm", "wb");
 
-			bot.global_bulk_command_create(commands);
-		}
-	});
+    bot.on_log(dpp::utility::cout_logger());
 
-	/* Handle slash command with the most recent addition to D++ features, coroutines! */
-	bot.on_slashcommand([](const dpp::slashcommand_t& event) -> dpp::task<void> {
-		if (event.command.get_command_name() == "ping") {
-			co_await event.co_reply("Pong!");
-		}
-		co_return;
-	});
+    /* The event is fired when someone issues your commands */
+    bot.on_slashcommand([&bot, &fd](const dpp::slashcommand_t& event) {
+        /* Check which command they ran */
+        if (event.command.get_command_name() == "record") {
+            /* Get the guild */
+            dpp::guild* g = dpp::find_guild(event.command.guild_id);
 
-	/* Start the bot */
-	bot.start(dpp::st_wait);
+            /* Attempt to connect to a voice channel, returns false if we fail to connect. */
+            if (!g->connect_member_voice(event.command.get_issuing_user().id)) {
+                event.reply("보이스 채널에 참가중이지 않습니다.");
+                return;
+            }
 
-	return 0;
+            /* Tell the user we joined their channel. */
+            event.reply("음성 채널에 참여하였습니다. 녹음을 시작합니다.");
+        }
+        else if (event.command.get_command_name() == "stop") {
+            event.from->disconnect_voice(event.command.guild_id);
+            fclose(fd);
+
+            event.reply("녹음을 종료합니다.");
+        }
+        });
+
+    bot.on_voice_receive([&bot, &fd, &user_id](const dpp::voice_receive_t& event) {
+        if (event.user_id == user_id) {
+            fwrite((char*)event.audio, 1, event.audio_size, fd);
+        }
+        });
+
+    bot.on_ready([&bot](const dpp::ready_t& event) {
+        if (dpp::run_once<struct register_bot_commands>()) {
+            /* Create a new command. */
+            dpp::slashcommand recordcommand("record", "음성 채널에 참여하여 녹음합니다.", bot.me.id);
+            dpp::slashcommand stopcommand("stop", "녹음을 종료합니다.", bot.me.id);
+
+            bot.global_bulk_command_create({ recordcommand, stopcommand });
+        }
+        });
+
+    /* Start bot */
+    bot.start(dpp::st_wait);
+
+    return 0;
 }
